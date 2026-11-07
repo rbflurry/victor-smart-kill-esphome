@@ -16,18 +16,25 @@ reporting all run on the trap's own ESP8266 and talk only to your LAN.
 
 ## What it does
 
-- 🔌 **100% local** — native Home Assistant API, no cloud, no DNS tricks.
+- 🔌 **100% local** — native Home Assistant API (encrypted), no cloud, no DNS tricks.
 - 🐭 **Catch detection** — hardware wake the instant the plates are bridged.
 - ⚡ **Kill cycle** — 10 s high-voltage pulse on catch (armable; off = log only).
 - 🔋 **Battery monitoring** — gated divider read, sampled once per wake to sip power.
-- 😴 **Deep sleep** — wakes to report, sleeps 6 h; retries in 10 min if HA is down.
+- 😴 **Deep sleep** — reports to HA roughly once a day, like the stock trap. The
+  ESP8266 can't single-sleep beyond ~3.5 h, so it chains short ~2 h chunks (counted
+  in RTC memory) and only brings up WiFi on the 12th (~24 h). Catches and the button
+  wake it instantly in between via the hardware reset line.
 - 🧹 **"Needs cleaning" flag** — set on a catch, visible in HA, clears on a fresh boot.
+- 💡 **At-a-glance LEDs** — green *breathes* while awake/reporting, blue lights in
+  AP/setup mode (not connected), red marks a catch that needs cleaning.
 - 🔴 **Optional walk-by indicator** — slow red blink on an uncleaned kill, for when
   you'd rather glance at the trap than open the app.
+- 🔢 **Multi-trap friendly** — the MAC is appended to the device name, so one config
+  flashes to any number of traps without collisions.
 
 ## Hardware
 
-Victor Smart-Kill, **Woodstream WEMT 2.0 REV4** board (ESP8266EX, 4 MB flash).
+Victor Smart-Kill, **Woodstream WEMT 2.0 REV4** board (ESP8266EX, 512 KB flash — AT25SF041).
 Other revisions may differ — check your pin map before flashing.
 
 | GPIO | Function |
@@ -35,12 +42,11 @@ Other revisions may differ — check your pin map before flashing.
 | 12 | Catch sense (active-low) |
 | 0  | Battery-divider enable (drive low to sample; **high at boot**) |
 | 13 + 2 | HV transformer drive (PWM, 230.6 Hz) |
-| 5 / 14 / 15 | Blue / red / green LED (active-high) |
+| 15 | Green LED — breathing status (PWM) |
+| 14 | Red LED — catch / needs cleaning |
+| 5  | Blue LED — Wi-Fi icon, lit in AP/setup mode |
 | A0 | Battery voltage (via GPIO0-gated divider) |
 | 1 / 3 | Used by the board — **keep UART logging off** |
-
-See [`victor-trap-notes.md`](victor-trap-notes.md) for the full reverse-engineering
-write-up (pin map, wake path, HV drive, boot gotchas).
 
 ## Flashing
 
@@ -66,15 +72,20 @@ Use a **3.3 V** USB-serial adapter (never 5 V):
    ```yaml
    wifi_ssid: "your-ssid"
    wifi_password: "your-wifi-password"
-   ota_password: "pick-something"
-   # api_key: "<32-byte base64>"   # only if you re-enable API encryption
+   ap_password: "fallback-hotspot-password"
+   api_key: "<32-byte base64>"      # e.g. `openssl rand -base64 32`
    ```
 2. First flash over USB-serial (the board speaks UART download; GPIO0 low at reset):
    ```bash
    esphome run victor-trap-esphome.yaml
    ```
-3. Add it in Home Assistant → **Settings → Devices & Services → ESPHome**.
-4. Later updates go over-the-air (OTA).
+3. Add it in Home Assistant → **Settings → Devices & Services → ESPHome**. It appears
+   as `local-kill-<mac>`; enter the `api_key` when prompted.
+4. If Wi-Fi ever fails, the trap raises a `local-kill-setup` hotspot for reconfiguration.
+
+> **Flash size:** this board uses a 512 KB flash (AT25SF041). That's too small for
+> OTA (which needs room to stage a second image), so `board: esp01` is set and
+> **updates are flashed over USB-serial**, not OTA.
 
 > **Logs:** the board uses GPIO1/3 for its own hardware, so serial logging is
 > disabled. View logs over the network via the ESPHome API instead.
@@ -85,9 +96,11 @@ In `substitutions:` at the top of `victor-trap-esphome.yaml`:
 
 | Key | Default | Meaning |
 |-----|---------|---------|
+| `node_name` | `local-kill` | Base device name (MAC suffix added automatically) |
 | `hv_duty` | `0.284` | HV PWM duty (static) |
-| `report_sleep` | `6h` | Sleep after a successful report |
-| `retry_sleep` | `10min` | Sleep if HA didn't connect |
+| `chunk_sleep` | `2h` | One deep-sleep chunk (keep under the ESP8266 ~3.5 h limit) |
+| `report_cycles` | `12` | WiFi report every N chunks (12 × 2h ≈ 24 h) |
+| `retry_sleep` | `10min` | Sleep if HA didn't connect on a report wake |
 | `api_timeout` | `60s` | How long to wait for HA before retrying |
 
 Battery scaling lives on the `Battery voltage` sensor (`multiply: 6.44`) and the
@@ -97,6 +110,7 @@ Battery scaling lives on the `Battery voltage` sensor (`multiply: 6.44`) and the
 
 - **Battery voltage**, **Battery %**, **Kill total**
 - **Catch line** (binary), **Needs cleaning** (binary, Problem)
+- **Status LED** (green light — breathes while awake)
 - **Arm trap**, **Stay awake**, **Walk-by red indicator** (switches)
 - **HV test 3s**, **Sample battery now**, **Mark cleaned** (buttons)
 
