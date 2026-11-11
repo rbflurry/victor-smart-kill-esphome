@@ -25,8 +25,9 @@ reporting all run on the trap's own ESP8266 and talk only to your LAN.
   in RTC memory) and only brings up WiFi on the 12th (~24 h). Catches and the button
   wake it instantly in between via the hardware reset line.
 - 🧹 **"Needs cleaning" flag** — set on a catch, visible in HA, clears on a fresh boot.
-- 💡 **At-a-glance LEDs** — green *breathes* while awake/reporting, blue lights in
-  AP/setup mode (not connected), red marks a catch that needs cleaning.
+- 💡 **At-a-glance LEDs** — green *breathes* while connecting, then goes *solid* once
+  linked to HA; blue lights in AP/setup mode (not connected); red marks a catch that
+  needs cleaning.
 - 🔴 **Optional walk-by indicator** — slow red blink on an uncleaned kill, for when
   you'd rather glance at the trap than open the app.
 - 🔢 **Multi-trap friendly** — the MAC is appended to the device name, so one config
@@ -90,6 +91,13 @@ Use a **3.3 V** USB-serial adapter (never 5 V):
 > **Logs:** the board uses GPIO1/3 for its own hardware, so serial logging is
 > disabled. View logs over the network via the ESPHome API instead.
 
+### Arming
+
+The trap ships **disarmed** (catches are logged, no shock). Because it's asleep almost
+all the time, HA can only send it commands during a wake. To arm it: **press the Wi-Fi
+button** (or power it on) — it stays awake for ~1 minute (`config_awake`), long enough
+to flip **Arm trap** in HA. `armed` is retained, so you only do this once.
+
 ## Configuration knobs
 
 In `substitutions:` at the top of `victor-trap-esphome.yaml`:
@@ -102,6 +110,7 @@ In `substitutions:` at the top of `victor-trap-esphome.yaml`:
 | `report_cycles` | `12` | WiFi report every N chunks (12 × 2h ≈ 24 h) |
 | `retry_sleep` | `10min` | Sleep if HA didn't connect on a report wake |
 | `api_timeout` | `60s` | How long to wait for HA before retrying |
+| `config_awake` | `1min` | Stay awake this long after a button press / power-on, to arm or configure from HA |
 
 Battery scaling lives on the `Battery voltage` sensor (`multiply: 6.44`) and the
 `Battery %` thresholds (`VFULL` / `VEMPTY`) — recalibrate for your pack.
@@ -109,8 +118,9 @@ Battery scaling lives on the `Battery voltage` sensor (`multiply: 6.44`) and the
 ## Home Assistant entities
 
 - **Battery voltage**, **Battery %**, **Kill total**
-- **Catch line** (binary), **Needs cleaning** (binary, Problem)
-- **Status LED** (green light — breathes while awake)
+- **Plates bridged** (binary), **Needs cleaning** (binary, Problem), **Status** (binary, connectivity)
+- **Status LED** (green light — breathes while connecting, solid once linked to HA)
+- **Wake reason** (diagnostic text — Scheduled / Catch / Button / Power on)
 - **Arm trap**, **Stay awake**, **Walk-by red indicator** (switches)
 - **HV test 3s**, **Sample battery now**, **Mark cleaned** (buttons)
 
