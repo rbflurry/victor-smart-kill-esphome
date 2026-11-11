@@ -1,30 +1,38 @@
-# Local-Kill trap - Home Assistant automation. See README.md in this folder.
-# Find/replace  local_kill_XXXXXX  with your trap's entity prefix and
-# notify.mobile_app_YOUR_PHONE  with your notify service, then paste into
+# Local-Kill trap - Home Assistant automation (multi-trap). See README.md in this folder.
+#
+# Works for any number of traps. Edit ONLY the list marked  ▼ YOUR TRAPS ▼
+# (one line per trap; entity IDs below assume you renamed the devices to
+# "Kitchen trap" / "Garage trap" - use your own names).
+# Replace notify.mobile_app_YOUR_PHONE with your notify service, then paste into
 # Settings > Automations > Create > Edit in YAML.
 #
-# 2. Still needs cleaning - nag on each check-in until it's cleared
+# Still needs cleaning: reminder on every check-in until the trap is reset.
+# Skips the check-in that IS the catch (01 already alerted for that one).
 alias: "Local-Kill: still needs cleaning reminder"
-mode: single
+mode: parallel
 trigger:
   - platform: state
-    entity_id: binary_sensor.local_kill_XXXXXX_status
+    entity_id:                                   # ▼ YOUR TRAPS ▼
+      - binary_sensor.kitchen_trap_status
+      - binary_sensor.garage_trap_status
     to: "on"
+variables:
+  dev: "{{ device_id(trigger.entity_id) }}"
+  ents: "{{ device_entities(device_id(trigger.entity_id)) }}"
+  trap: "{{ device_attr(device_id(trigger.entity_id), 'name_by_user') or device_attr(device_id(trigger.entity_id), 'name') }}"
+  clean_ent: "{{ device_entities(device_id(trigger.entity_id)) | select('match', 'binary_sensor\\..*_needs_cleaning$') | first | default('') }}"
+  why_ent: "{{ device_entities(device_id(trigger.entity_id)) | select('match', 'sensor\\..*_wake_reason$') | first | default('') }}"
 condition:
-  - condition: state
-    entity_id: binary_sensor.local_kill_XXXXXX_needs_cleaning
-    state: "on"
-  # skip the check-in that IS the catch (automation 1 already covered it)
   - condition: template
-    value_template: "{{ states('sensor.local_kill_XXXXXX_wake_reason') != 'Catch' }}"
+    value_template: "{{ is_state(clean_ent, 'on') and states(why_ent) != 'Catch' }}"
 action:
   - delay: "00:00:05"
   - service: notify.mobile_app_YOUR_PHONE
     data:
-      title: "🧹 Trap still needs emptying"
+      title: "🧹 {{ trap }} still needs emptying"
       message: >-
-        Catch reported {{ relative_time(states.binary_sensor.local_kill_XXXXXX_needs_cleaning.last_changed) }} ago
+        Catch reported {{ relative_time(states[clean_ent].last_changed) }} ago
         and the trap hasn't been reset yet.
       data:
-        tag: local-kill-catch       # replaces the catch notification
+        tag: "{{ dev }}-catch"           # replaces the catch notification
         group: local-kill

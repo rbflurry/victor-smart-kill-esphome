@@ -1,30 +1,48 @@
-# Local-Kill trap - Home Assistant automation. See README.md in this folder.
-# Find/replace  local_kill_XXXXXX  with your trap's entity prefix and
-# notify.mobile_app_YOUR_PHONE  with your notify service, then paste into
+# Local-Kill trap - Home Assistant automation (multi-trap). See README.md in this folder.
+#
+# NO TRAP LIST NEEDED: this one finds every Local-Kill trap automatically
+# (any ESPHome device that has a "Kill total" sensor).
+# Replace notify.mobile_app_YOUR_PHONE with your notify service, then paste into
 # Settings > Automations > Create > Edit in YAML.
 #
-# 5. Missed check-in
-#    Normal report interval is ~24h (+10 min retries if WiFi/HA was down), so
-#    26h of silence means something is wrong. Template trigger re-checks every
-#    minute and survives HA restarts (after a restart, last_changed resets, so
-#    the alert is delayed rather than lost).
+# Missed check-in: checks hourly. Alerts when a trap has been silent 26 h
+# (24 h report interval + retry margin), then reminds once a day while it stays
+# silent. After an HA restart last_changed resets, so alerts are delayed, not lost.
 alias: "Local-Kill: missed check-in"
 mode: single
 trigger:
-  - platform: template
-    value_template: >-
-      {{ is_state('binary_sensor.local_kill_XXXXXX_status', 'off')
-         and now() - states.binary_sensor.local_kill_XXXXXX_status.last_changed
-             > timedelta(hours=26) }}
+  - platform: time_pattern
+    minutes: 7
+variables:
+  overdue: >-
+    {% set ns = namespace(l=[]) %}
+    {% for s in integration_entities('esphome') | select('match', 'binary_sensor\\..*_status$') %}
+      {% set ents = device_entities(device_id(s)) %}
+      {% if ents | select('match', 'sensor\\..*_kill_total$') | list | count > 0 and is_state(s, 'off') %}
+        {% set h = (now() - states[s].last_changed).total_seconds() / 3600 %}
+        {% if h >= 26 and ((h - 26) % 24) < 1 %}{% set ns.l = ns.l + [s] %}{% endif %}
+      {% endif %}
+    {% endfor %}
+    {{ ns.l }}
+condition:
+  - condition: template
+    value_template: "{{ overdue | count > 0 }}"
 action:
-  - service: notify.mobile_app_YOUR_PHONE
-    data:
-      title: "📡 Trap hasn't checked in"
-      message: >-
-        No report for {{ relative_time(states.binary_sensor.local_kill_XXXXXX_status.last_changed) }}.
-        Last battery reading: {{ states('sensor.local_kill_XXXXXX_battery_voltage') }} V.
-        Possible dead battery, WiFi problem, or crash - press the button on the trap to wake it.
-      data:
-        tag: local-kill-missed
-        group: local-kill
-        priority: high
+  - repeat:
+      for_each: "{{ overdue }}"
+      sequence:
+        - variables:
+            dev: "{{ device_id(repeat.item) }}"
+            trap: "{{ device_attr(device_id(repeat.item), 'name_by_user') or device_attr(device_id(repeat.item), 'name') }}"
+            volt_ent: "{{ device_entities(device_id(repeat.item)) | select('match', 'sensor\\..*_battery_voltage$') | first | default('') }}"
+        - service: notify.mobile_app_YOUR_PHONE
+          data:
+            title: "📡 {{ trap }} hasn't checked in"
+            message: >-
+              No report for {{ relative_time(states[repeat.item].last_changed) }}.
+              Last battery reading: {{ states(volt_ent) }} V.
+              Possible dead battery, WiFi problem, or crash - press the button on the trap to wake it.
+            data:
+              tag: "{{ dev }}-missed"
+              group: local-kill
+              priority: high

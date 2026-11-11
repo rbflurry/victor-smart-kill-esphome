@@ -1,0 +1,284 @@
+# =============================================================================
+# Local-Kill traps - Home Assistant dashboard (built-in cards only, no HACS)
+#
+# Layout:
+#   * "All traps" tab - finds EVERY Local-Kill trap automatically (any ESPHome
+#     device with a "Kill total" sensor). Nothing to edit.
+#   * One detail tab per trap. The "Kitchen trap" view below is the template:
+#     copy the whole view block (from "  - title: Kitchen trap" to the end),
+#     find/replace  kitchen_trap  with the next trap's ID (e.g. garage_trap),
+#     and change its title / path.
+#
+# Entity IDs assume you renamed each device in HA (Settings > Devices > Local-Kill
+# > pencil > "Kitchen trap", and said YES to renaming the entity IDs).
+#
+# Install: Settings > Dashboards > + Add dashboard > "New dashboard from scratch",
+#   open it, pencil > three-dot menu > "Raw configuration editor", paste, Save.
+#   Needs HA 2024.8 or newer (sections view + perform-action).
+#
+# Controls (switches/buttons) only reach a trap while it's AWAKE - it sleeps
+# ~15 s after reporting. Press the trap's button for a 1-minute config window.
+# =============================================================================
+title: Trap
+views:
+  # ===================================================================== OVERVIEW
+  - title: All traps
+    path: all
+    icon: mdi:view-dashboard
+    type: sections
+    max_columns: 2
+    sections:
+      - type: grid
+        column_span: 2
+        cards:
+          - type: heading
+            heading: All traps
+            icon: mdi:rodent
+
+          # Alert banners - only show when something needs attention
+          - type: markdown
+            content: >-
+              {%- set ns = namespace(caught=[], low=[], missed=[], n=0) %}
+              {% for s in integration_entities('esphome') | select('match', 'binary_sensor\\..*_status$') %}
+                {% set ents = device_entities(device_id(s)) %}
+                {% if ents | select('match', 'sensor\\..*_kill_total$') | list | count > 0 %}
+                  {% set ns.n = ns.n + 1 %}
+                  {% set name = device_attr(device_id(s), 'name_by_user') or device_attr(device_id(s), 'name') %}
+                  {% set clean = ents | select('match', 'binary_sensor\\..*_needs_cleaning$') | first | default('') %}
+                  {% set volt = ents | select('match', 'sensor\\..*_battery_voltage$') | first | default('') %}
+                  {% if is_state(clean, 'on') %}{% set ns.caught = ns.caught + [name] %}{% endif %}
+                  {% if (states(volt) | float(99)) < 5.0 %}{% set ns.low = ns.low + [name] %}{% endif %}
+                  {% if is_state(s, 'off') and now() - states[s].last_changed > timedelta(hours=26) %}{% set ns.missed = ns.missed + [name] %}{% endif %}
+                {% endif %}
+              {% endfor %}
+              {% if ns.caught %}<ha-alert alert-type="error" title="Needs emptying">{{ ns.caught | join(', ') }}</ha-alert>{% endif %}
+              {% if ns.low %}<ha-alert alert-type="warning" title="Low battery">{{ ns.low | join(', ') }}</ha-alert>{% endif %}
+              {% if ns.missed %}<ha-alert alert-type="warning" title="Missed check-in">{{ ns.missed | join(', ') }}</ha-alert>{% endif %}
+              {% if not (ns.caught or ns.low or ns.missed) %}<ha-alert alert-type="success">All {{ ns.n }} trap(s) OK - nothing caught, batteries fine, all checking in.</ha-alert>{% endif %}
+
+          # One row per trap, auto-discovered
+          - type: markdown
+            content: |-
+              | Trap | Status | Battery | Kills | Armed | Last check-in |
+              |:--|:--|--:|--:|:--:|:--|
+              {%- for s in integration_entities('esphome') | select('match', 'binary_sensor\\..*_status$') %}
+              {%- set ents = device_entities(device_id(s)) %}
+              {%- set kills = ents | select('match', 'sensor\\..*_kill_total$') | first | default('') %}
+              {%- if kills %}
+              {%- set name = device_attr(device_id(s), 'name_by_user') or device_attr(device_id(s), 'name') %}
+              {%- set clean = ents | select('match', 'binary_sensor\\..*_needs_cleaning$') | first | default('') %}
+              {%- set pct = ents | select('match', 'sensor\\..*_battery$') | first | default('') %}
+              {%- set volt = ents | select('match', 'sensor\\..*_battery_voltage$') | first | default('') %}
+              {%- set armed = ents | select('match', 'switch\\..*_arm_trap_hv_live$') | first | default('') %}
+              {%- set v = states(volt) | float(0) %}
+              | **{{ name }}** | {{ '🐭 Needs emptying' if is_state(clean, 'on') else '✅ Clear' }} | {{ '🚨' if v < 4.8 else ('🪫' if v < 5.0 else '🔋') }} {{ states(pct) }}% ({{ states(volt) }} V) | {{ states(kills) }} | {{ '⚡' if is_state(armed, 'on') else '⛔' }} | {{ '🟢 now' if is_state(s, 'on') else ('⚠️ ' if now() - states[s].last_changed > timedelta(hours=26) else '') ~ relative_time(states[s].last_changed) ~ ' ago' }} |
+              {%- endif %}
+              {%- endfor %}
+
+              ⚡ armed · ⛔ disarmed · open a trap's tab above for controls and history.
+
+  # ============================================================ PER-TRAP DETAIL
+  # Copy this whole view for each trap (find/replace kitchen_trap).
+  - title: Kitchen trap
+    path: kitchen
+    icon: mdi:rodent
+    type: sections
+    max_columns: 3
+    sections:
+
+      # ------------------------------------------------------------------ Status
+      - type: grid
+        cards:
+          - type: heading
+            heading: Trap status
+            icon: mdi:rodent
+
+          # Red banner while a catch is waiting to be emptied
+          - type: markdown
+            content: >-
+              <ha-alert alert-type="error" title="Mouse caught">
+              Caught {{ relative_time(states.binary_sensor.kitchen_trap_needs_cleaning.last_changed) }} ago.
+              Empty the trap, then press <b>Mark cleaned</b> while it's awake
+              (or re-insert the batteries).
+              </ha-alert>
+            visibility:
+              - condition: state
+                entity: binary_sensor.kitchen_trap_needs_cleaning
+                state: "on"
+
+          # Check-in summary: online now / last seen / overdue warning
+          - type: markdown
+            content: >-
+              {% set s = states.binary_sensor.kitchen_trap_status %}
+              {% set ago = now() - s.last_changed %}
+              {% if s.state == 'on' %}
+              <ha-alert alert-type="success">Online now - reporting</ha-alert>
+              {% elif ago > timedelta(hours=26) %}
+              <ha-alert alert-type="warning" title="Missed check-in">
+              Last heard from {{ relative_time(s.last_changed) }} ago.
+              Check the battery / Wi-Fi, or press the trap's button.
+              </ha-alert>
+              {% else %}
+              <ha-alert alert-type="info">
+              Asleep - last check-in {{ relative_time(s.last_changed) }} ago
+              ({{ as_timestamp(s.last_changed) | timestamp_custom('%a %-I:%M %p') }}).
+              Next scheduled report in about
+              {{ ((timedelta(hours=24) - ago).total_seconds() / 3600) | round(0) | int }} h.
+              </ha-alert>
+              {% endif %}
+
+          - type: tile
+            entity: binary_sensor.kitchen_trap_needs_cleaning
+            name: Needs cleaning
+            color: red
+          - type: tile
+            entity: sensor.kitchen_trap_kill_total
+            name: Total kills
+            icon: mdi:counter
+          - type: tile
+            entity: switch.kitchen_trap_arm_trap_hv_live
+            name: Armed
+            icon: mdi:flash
+            color: amber
+            tap_action:
+              action: more-info
+          - type: tile
+            entity: sensor.kitchen_trap_wake_reason
+            name: Last wake
+            icon: mdi:alarm
+          - type: tile
+            entity: binary_sensor.kitchen_trap_plates_bridged
+            name: Plates bridged
+            icon: mdi:electric-switch-closed
+          - type: tile
+            entity: binary_sensor.kitchen_trap_status
+            name: Connection
+            icon: mdi:wifi
+
+      # ----------------------------------------------------------------- Battery
+      - type: grid
+        cards:
+          - type: heading
+            heading: Battery
+            icon: mdi:battery
+          - type: gauge
+            entity: sensor.kitchen_trap_battery
+            name: Battery
+            min: 0
+            max: 100
+            needle: true
+            severity:
+              green: 40
+              yellow: 20
+              red: 0
+          - type: tile
+            entity: sensor.kitchen_trap_battery_voltage
+            name: Voltage
+            icon: mdi:sine-wave
+          # The voltage only updates once per check-in, so a long window shows the trend
+          - type: history-graph
+            title: Voltage - last 30 days
+            hours_to_show: 720
+            entities:
+              - entity: sensor.kitchen_trap_battery_voltage
+                name: Voltage
+          - type: markdown
+            content: >-
+              {% set v = states('sensor.kitchen_trap_battery_voltage') | float(0) %}
+              {% if v < 4.8 %}<ha-alert alert-type="error">Critical - replace batteries now ({{ v }} V)</ha-alert>
+              {% elif v < 5.0 %}<ha-alert alert-type="warning">Low - plan a swap ({{ v }} V)</ha-alert>
+              {% else %}Full 6.40 V · warn below 5.00 V · critical below 4.80 V · empty 4.60 V{% endif %}
+
+      # ---------------------------------------------------------------- Controls
+      - type: grid
+        cards:
+          - type: heading
+            heading: Controls
+            icon: mdi:tune
+          - type: markdown
+            content: >-
+              {% if is_state('binary_sensor.kitchen_trap_status', 'on') %}
+              <ha-alert alert-type="success">Trap is awake - controls will work now.</ha-alert>
+              {% else %}
+              <ha-alert alert-type="info">Trap is asleep. Press the button on the trap
+              (1-minute window) before using these.</ha-alert>
+              {% endif %}
+          - type: tile
+            entity: switch.kitchen_trap_arm_trap_hv_live
+            name: Arm trap (HV live)
+            icon: mdi:flash-alert
+            color: red
+            tap_action:
+              action: toggle
+              confirmation:
+                text: Change the trap's armed state? When armed, a catch fires high voltage.
+          - type: tile
+            entity: switch.kitchen_trap_walk_by_red_indicator
+            name: Walk-by red blink
+            icon: mdi:led-on
+            tap_action:
+              action: toggle
+          - type: tile
+            entity: switch.kitchen_trap_stay_awake
+            name: Stay awake (bench)
+            icon: mdi:sleep-off
+            tap_action:
+              action: toggle
+          - type: tile
+            entity: button.kitchen_trap_mark_cleaned
+            name: Mark cleaned
+            icon: mdi:broom
+            color: green
+            tap_action:
+              action: perform-action
+              perform_action: button.press
+              target:
+                entity_id: button.kitchen_trap_mark_cleaned
+          - type: tile
+            entity: button.kitchen_trap_sample_battery_now
+            name: Sample battery
+            icon: mdi:battery-sync
+            tap_action:
+              action: perform-action
+              perform_action: button.press
+              target:
+                entity_id: button.kitchen_trap_sample_battery_now
+          - type: tile
+            entity: button.kitchen_trap_hv_test_3s_caution
+            name: HV test 3 s
+            icon: mdi:flash-triangle
+            color: red
+            tap_action:
+              action: perform-action
+              perform_action: button.press
+              target:
+                entity_id: button.kitchen_trap_hv_test_3s_caution
+              confirmation:
+                text: Fire high voltage on the plates for 3 seconds? Keep hands clear.
+
+      # ----------------------------------------------------------------- History
+      - type: grid
+        column_span: 2
+        cards:
+          - type: heading
+            heading: History
+            icon: mdi:history
+          - type: history-graph
+            title: Check-ins and catches - last 7 days
+            hours_to_show: 168
+            entities:
+              - entity: binary_sensor.kitchen_trap_status
+                name: Online
+              - entity: binary_sensor.kitchen_trap_needs_cleaning
+                name: Needs cleaning
+              - entity: binary_sensor.kitchen_trap_plates_bridged
+                name: Plates bridged
+          - type: logbook
+            title: Activity
+            hours_to_show: 168
+            target:
+              entity_id:
+                - sensor.kitchen_trap_wake_reason
+                - binary_sensor.kitchen_trap_needs_cleaning
+                - sensor.kitchen_trap_kill_total
+                - switch.kitchen_trap_arm_trap_hv_live

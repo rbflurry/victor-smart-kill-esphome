@@ -1,36 +1,42 @@
-# Local-Kill trap - Home Assistant automation. See README.md in this folder.
-# Find/replace  local_kill_XXXXXX  with your trap's entity prefix and
-# notify.mobile_app_YOUR_PHONE  with your notify service, then paste into
+# Local-Kill trap - Home Assistant automation (multi-trap). See README.md in this folder.
+#
+# Works for any number of traps. Edit ONLY the list marked  ▼ YOUR TRAPS ▼
+# (one line per trap; entity IDs below assume you renamed the devices to
+# "Kitchen trap" / "Garage trap" - use your own names).
+# Replace notify.mobile_app_YOUR_PHONE with your notify service, then paste into
 # Settings > Automations > Create > Edit in YAML.
 #
-# 4. Critical battery ALARM - rings even on silent / Do Not Disturb
-#    Below ~4.8 V the HV may not charge properly and the trap may brown out.
+# Critical battery ALARM: below 4.80 V on a check-in. Rings through silent / DND.
 alias: "Local-Kill: critical battery alarm"
-mode: single
+mode: parallel
 trigger:
   - platform: state
-    entity_id: binary_sensor.local_kill_XXXXXX_status
+    entity_id:                                   # ▼ YOUR TRAPS ▼
+      - binary_sensor.kitchen_trap_status
+      - binary_sensor.garage_trap_status
     to: "on"
+variables:
+  dev: "{{ device_id(trigger.entity_id) }}"
+  ents: "{{ device_entities(device_id(trigger.entity_id)) }}"
+  trap: "{{ device_attr(device_id(trigger.entity_id), 'name_by_user') or device_attr(device_id(trigger.entity_id), 'name') }}"
+  volt_ent: "{{ device_entities(device_id(trigger.entity_id)) | select('match', 'sensor\\..*_battery_voltage$') | first | default('') }}"
 condition:
-  - condition: numeric_state
-    entity_id: sensor.local_kill_XXXXXX_battery_voltage
-    below: 4.80
+  - condition: template
+    value_template: "{{ (states(volt_ent) | float(99)) < 4.80 }}"
 action:
   - service: notify.mobile_app_YOUR_PHONE
     data:
-      title: "🚨 Trap battery CRITICAL"
+      title: "🚨 {{ trap }} battery CRITICAL"
       message: >-
-        {{ states('sensor.local_kill_XXXXXX_battery_voltage') }} V - replace batteries now,
-        the trap may stop killing or reporting.
+        {{ states(volt_ent) }} V - replace batteries now, the trap may stop
+        killing or reporting.
       data:
-        tag: local-kill-battery
+        tag: "{{ dev }}-battery"
         group: local-kill
-        # Android: alarm stream rings through silent/DND
-        ttl: 0
+        ttl: 0                         # Android: alarm stream rings through silent/DND
         priority: high
         channel: alarm_stream
-        # iOS: critical alert (rings through silent/Focus)
-        push:
+        push:                          # iOS: critical alert
           sound:
             name: default
             critical: 1

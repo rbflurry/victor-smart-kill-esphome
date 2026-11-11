@@ -1,28 +1,36 @@
-# Local-Kill trap - Home Assistant automation. See README.md in this folder.
-# Find/replace  local_kill_XXXXXX  with your trap's entity prefix and
-# notify.mobile_app_YOUR_PHONE  with your notify service, then paste into
+# Local-Kill trap - Home Assistant automation (multi-trap). See README.md in this folder.
+#
+# Works for any number of traps. Edit ONLY the list marked  ▼ YOUR TRAPS ▼
+# (one line per trap; entity IDs below assume you renamed the devices to
+# "Kitchen trap" / "Garage trap" - use your own names).
+# Replace notify.mobile_app_YOUR_PHONE with your notify service, then paste into
 # Settings > Automations > Create > Edit in YAML.
 #
-# 3. Low battery warning (checked on every check-in, so it repeats ~daily)
-#    Firmware: 6.40 V = 100 %, 4.60 V = 0 %.
+# Low battery warning: 4.80-5.00 V on a check-in (repeats ~daily).
+# Firmware scale: 6.40 V = 100 %, 4.60 V = 0 %.
 alias: "Local-Kill: low battery warning"
-mode: single
+mode: parallel
 trigger:
   - platform: state
-    entity_id: binary_sensor.local_kill_XXXXXX_status
+    entity_id:                                   # ▼ YOUR TRAPS ▼
+      - binary_sensor.kitchen_trap_status
+      - binary_sensor.garage_trap_status
     to: "on"
+variables:
+  dev: "{{ device_id(trigger.entity_id) }}"
+  ents: "{{ device_entities(device_id(trigger.entity_id)) }}"
+  trap: "{{ device_attr(device_id(trigger.entity_id), 'name_by_user') or device_attr(device_id(trigger.entity_id), 'name') }}"
+  volt_ent: "{{ device_entities(device_id(trigger.entity_id)) | select('match', 'sensor\\..*_battery_voltage$') | first | default('') }}"
+  pct_ent: "{{ device_entities(device_id(trigger.entity_id)) | select('match', 'sensor\\..*_battery$') | first | default('') }}"
 condition:
   - condition: template
-    value_template: >-
-      {% set v = states('sensor.local_kill_XXXXXX_battery_voltage') | float(99) %}
-      {{ 4.80 <= v < 5.00 }}
+    value_template: "{{ 4.80 <= (states(volt_ent) | float(99)) < 5.00 }}"
 action:
   - service: notify.mobile_app_YOUR_PHONE
     data:
-      title: "🪫 Trap battery low"
+      title: "🪫 {{ trap }} battery low"
       message: >-
-        {{ states('sensor.local_kill_XXXXXX_battery_voltage') }} V
-        ({{ states('sensor.local_kill_XXXXXX_battery') }}%). Plan a battery swap.
+        {{ states(volt_ent) }} V ({{ states(pct_ent) }}%). Plan a battery swap.
       data:
-        tag: local-kill-battery
+        tag: "{{ dev }}-battery"
         group: local-kill

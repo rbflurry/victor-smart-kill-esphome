@@ -126,7 +126,7 @@ Battery scaling lives on the `Battery voltage` sensor (`multiply: 6.44`) and the
 
 ### Automations & alerts
 
-Ready-made Home Assistant automations for catch alerts, cleaning reminders, low-battery alarms and missed check-ins are in [`home-assistant/`](home-assistant/README.md). See the [automation guide](home-assistant/README.md) for setup and how each one works.
+Ready-made Home Assistant automations for catch alerts, cleaning reminders, low-battery alarms and missed check-ins are in [`home-assistant/`](home-assistant/README.md). A ready-made [dashboard](home-assistant/dashboard-local-kill.yaml) is there too. Everything supports multiple traps. See the [automation guide](home-assistant/README.md) for setup and how each one works.
 
 ## ⚠️ Safety
 
