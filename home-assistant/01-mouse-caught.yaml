@@ -1,0 +1,35 @@
+# Local-Kill trap - Home Assistant automation. See README.md in this folder.
+# Find/replace  local_kill_XXXXXX  with your trap's entity prefix and
+# notify.mobile_app_YOUR_PHONE  with your notify service, then paste into
+# Settings > Automations > Create > Edit in YAML.
+#
+# 1. Mouse caught
+#    Fires when "Needs cleaning" goes off -> on. from: "off" prevents re-firing
+#    after an HA restart (unknown -> on).
+alias: "Local-Kill: mouse caught"
+mode: single
+trigger:
+  - platform: state
+    entity_id: binary_sensor.local_kill_XXXXXX_needs_cleaning
+    from: "off"
+    to: "on"
+action:
+  - delay: "00:00:03"            # let kill total / armed state arrive
+  - variables:
+      armed: "{{ is_state('switch.local_kill_XXXXXX_arm_trap_hv_live', 'on') }}"
+      total: "{{ states('sensor.local_kill_XXXXXX_kill_total') | int(0) }}"
+  - service: notify.mobile_app_YOUR_PHONE
+    data:
+      title: "🐭 Trap caught something"
+      message: >-
+        {% if armed %}HV fired.{% else %}Trap was DISARMED - HV did not fire, check it soon.{% endif %}
+        Kill #{{ total }}. Empty it, then press "Mark cleaned" (or re-insert the batteries).
+      data:
+        tag: local-kill-catch
+        group: local-kill
+        # Android: show as high priority / heads-up
+        priority: high
+        ttl: 0
+        # iOS: time-sensitive breaks through Focus
+        push:
+          interruption-level: time-sensitive

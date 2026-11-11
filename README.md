@@ -124,6 +124,10 @@ Battery scaling lives on the `Battery voltage` sensor (`multiply: 6.44`) and the
 - **Arm trap**, **Stay awake**, **Walk-by red indicator** (switches)
 - **HV test 3s**, **Sample battery now**, **Mark cleaned** (buttons)
 
+### Automations & alerts
+
+Ready-made Home Assistant automations for catch alerts, cleaning reminders, low-battery alarms and missed check-ins are in [`home-assistant/`](home-assistant/README.md). See the [automation guide](home-assistant/README.md) for setup and how each one works.
+
 ## ⚠️ Safety
 
 This trap generates **high voltage** to kill rodents. The HV test button and the

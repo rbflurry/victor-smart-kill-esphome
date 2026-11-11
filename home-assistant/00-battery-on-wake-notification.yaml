@@ -1,0 +1,49 @@
+# =============================================================================
+# Home Assistant automation: notify battery voltage each time a Local-Kill trap
+# wakes and reports in.
+#
+# Why trigger on "Status" instead of the voltage sensor?
+#   The trap samples the battery ONCE per wake, before the API connects. If the
+#   reading is identical to last time, the voltage entity never "changes" and a
+#   state trigger would not fire. "Status" goes on -> every time HA connects,
+#   which is exactly "the trap woke up and reported".
+#   (Intermediate 2h heartbeat wakes don't bring up WiFi, so you'll get one
+#   notification per ~24h report, plus catches, button presses and power-on.)
+#
+# Setup:
+#   1. Settings > Automations > Create > Edit in YAML, paste this in.
+#   2. Replace the trigger entity with your trap's Status sensor
+#      (name_add_mac_suffix makes it something like
+#      binary_sensor.local_kill_a1b2c3_status). Add more traps to the list.
+#   3. Replace notify.mobile_app_YOUR_PHONE with your phone's notify service.
+# =============================================================================
+alias: "Local-Kill: battery report on wake"
+description: "Send battery voltage, % and wake reason when a trap checks in"
+mode: parallel
+trigger:
+  - platform: state
+    entity_id:
+      - binary_sensor.local_kill_XXXXXX_status     # <-- your trap(s)
+    to: "on"
+action:
+  # Give HA a moment to receive the fresh battery/wake-reason states after connect
+  - delay: "00:00:05"
+  - variables:
+      ents: "{{ device_entities(device_id(trigger.entity_id)) }}"
+      volt_ent: "{{ ents | select('match', 'sensor\\..*battery_voltage$') | first | default('') }}"
+      pct_ent:  "{{ ents | select('match', 'sensor\\..*battery$') | first | default('') }}"
+      why_ent:  "{{ ents | select('match', 'sensor\\..*wake_reason$') | first | default('') }}"
+      trap:  "{{ device_attr(device_id(trigger.entity_id), 'name_by_user') or device_attr(device_id(trigger.entity_id), 'name') }}"
+      volts: "{{ states(volt_ent) | float(0) }}"
+      pct:   "{{ states(pct_ent) }}"
+      why:   "{{ states(why_ent) if why_ent else 'unknown' }}"
+  - service: notify.mobile_app_YOUR_PHONE            # <-- your notify service
+    data:
+      title: >-
+        {{ '🪫 ' if volts < 5.0 else '🔋 ' }}{{ trap }} woke ({{ why }})
+      message: >-
+        Battery {{ '%.2f' | format(volts) }} V ({{ pct }}%)
+        {%- if volts < 5.0 %} - getting low, plan a battery swap{% endif %}
+      data:
+        tag: "{{ trigger.entity_id }}-battery"     # replaces the previous one instead of stacking
+        group: local-kill

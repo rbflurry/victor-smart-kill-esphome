@@ -1,0 +1,30 @@
+# Local-Kill trap - Home Assistant automation. See README.md in this folder.
+# Find/replace  local_kill_XXXXXX  with your trap's entity prefix and
+# notify.mobile_app_YOUR_PHONE  with your notify service, then paste into
+# Settings > Automations > Create > Edit in YAML.
+#
+# 2. Still needs cleaning - nag on each check-in until it's cleared
+alias: "Local-Kill: still needs cleaning reminder"
+mode: single
+trigger:
+  - platform: state
+    entity_id: binary_sensor.local_kill_XXXXXX_status
+    to: "on"
+condition:
+  - condition: state
+    entity_id: binary_sensor.local_kill_XXXXXX_needs_cleaning
+    state: "on"
+  # skip the check-in that IS the catch (automation 1 already covered it)
+  - condition: template
+    value_template: "{{ states('sensor.local_kill_XXXXXX_wake_reason') != 'Catch' }}"
+action:
+  - delay: "00:00:05"
+  - service: notify.mobile_app_YOUR_PHONE
+    data:
+      title: "🧹 Trap still needs emptying"
+      message: >-
+        Catch reported {{ relative_time(states.binary_sensor.local_kill_XXXXXX_needs_cleaning.last_changed) }} ago
+        and the trap hasn't been reset yet.
+      data:
+        tag: local-kill-catch       # replaces the catch notification
+        group: local-kill

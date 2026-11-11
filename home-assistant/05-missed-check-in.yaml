@@ -1,0 +1,30 @@
+# Local-Kill trap - Home Assistant automation. See README.md in this folder.
+# Find/replace  local_kill_XXXXXX  with your trap's entity prefix and
+# notify.mobile_app_YOUR_PHONE  with your notify service, then paste into
+# Settings > Automations > Create > Edit in YAML.
+#
+# 5. Missed check-in
+#    Normal report interval is ~24h (+10 min retries if WiFi/HA was down), so
+#    26h of silence means something is wrong. Template trigger re-checks every
+#    minute and survives HA restarts (after a restart, last_changed resets, so
+#    the alert is delayed rather than lost).
+alias: "Local-Kill: missed check-in"
+mode: single
+trigger:
+  - platform: template
+    value_template: >-
+      {{ is_state('binary_sensor.local_kill_XXXXXX_status', 'off')
+         and now() - states.binary_sensor.local_kill_XXXXXX_status.last_changed
+             > timedelta(hours=26) }}
+action:
+  - service: notify.mobile_app_YOUR_PHONE
+    data:
+      title: "📡 Trap hasn't checked in"
+      message: >-
+        No report for {{ relative_time(states.binary_sensor.local_kill_XXXXXX_status.last_changed) }}.
+        Last battery reading: {{ states('sensor.local_kill_XXXXXX_battery_voltage') }} V.
+        Possible dead battery, WiFi problem, or crash - press the button on the trap to wake it.
+      data:
+        tag: local-kill-missed
+        group: local-kill
+        priority: high
