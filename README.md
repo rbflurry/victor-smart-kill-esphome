@@ -18,7 +18,7 @@ reporting all run on the trap's own ESP8266 and talk only to your LAN.
 
 - 🔌 **100% local** — native Home Assistant API (encrypted), no cloud, no DNS tricks.
 - 🐭 **Catch detection** — hardware wake the instant the plates are bridged.
-- ⚡ **Kill cycle** — 10 s high-voltage pulse on catch (armable; off = log only).
+- ⚡ **Kill cycle** — 10 s high-voltage pulse on **every** catch (always live).
 - 🔋 **Battery monitoring** — gated divider read, sampled once per wake to sip power.
 - 😴 **Deep sleep** — reports to HA roughly once a day, like the stock trap. The
   ESP8266 can't single-sleep beyond ~3.5 h, so it chains short ~2 h chunks (counted
@@ -91,12 +91,10 @@ Use a **3.3 V** USB-serial adapter (never 5 V):
 > **Logs:** the board uses GPIO1/3 for its own hardware, so serial logging is
 > disabled. View logs over the network via the ESPHome API instead.
 
-### Arming
-
-The trap ships **disarmed** (catches are logged, no shock). Because it's asleep almost
-all the time, HA can only send it commands during a wake. To arm it: **press the Wi-Fi
-button** (or power it on) — it stays awake for ~1 minute (`config_awake`), long enough
-to flip **Arm trap** in HA. `armed` is retained, so you only do this once.
+> **Always live:** HV fires on every confirmed catch — there is no arm/disarm. Treat
+> the trap as hot the instant it's powered: bridging the plates (a finger, a tool, a
+> stray wire) will trigger the 10 s pulse. Keep it **unpowered** while assembling or
+> handling, and only power it once it's placed.
 
 ## Configuration knobs
 
@@ -121,19 +119,16 @@ Battery scaling lives on the `Battery voltage` sensor (`multiply: 6.44`) and the
 - **Plates bridged** (binary), **Needs cleaning** (binary, Problem), **Status** (binary, connectivity)
 - **Status LED** (green light — breathes while connecting, solid once linked to HA)
 - **Wake reason** (diagnostic text — Scheduled / Catch / Button / Power on)
-- **Arm trap**, **Stay awake**, **Walk-by red indicator** (switches)
+- **Stay awake**, **Walk-by red indicator** (switches)
 - **HV test 3s**, **Sample battery now**, **Mark cleaned** (buttons)
-
-### Automations & alerts
-
-Ready-made Home Assistant automations for catch alerts, cleaning reminders, low-battery alarms and missed check-ins are in [`home-assistant/`](home-assistant/README.md). A ready-made [dashboard](home-assistant/dashboard-local-kill.yaml) is there too. Everything supports multiple traps. See the [automation guide](home-assistant/README.md) for setup and how each one works.
 
 ## ⚠️ Safety
 
-This trap generates **high voltage** to kill rodents. The HV test button and the
-armed kill cycle energize the plates. Keep fingers clear, don't bench-fire it near
-anything conductive, and leave it **disarmed** until it's assembled and placed. You
-are responsible for operating your own hardware safely.
+This trap generates **high voltage** to kill rodents, and this firmware is **always
+live** — any confirmed catch energizes the plates, there is no arm/disarm. Keep it
+**unpowered** until it's fully assembled and placed, keep fingers clear, and don't
+bench-fire it near anything conductive. The HV test button energizes the plates on
+demand too. You are responsible for operating your own hardware safely.
 
 ## License
 

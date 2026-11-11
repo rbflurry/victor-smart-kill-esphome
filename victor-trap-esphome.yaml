@@ -9,7 +9,7 @@
 # Flow each wake:
 #   boot -> GPIO0 high -> (fresh boot + no short? clear needs_cleaning) ->
 #   sample battery (GPIO0 pulsed low 300ms) ->
-#   if catch: red, count++, needs_cleaning=true, (if armed) 10s static HV, green re-confirm ->
+#   if catch: red, count++, needs_cleaning=true, ALWAYS-LIVE 10s static HV, green re-confirm ->
 #   wait for HA API (<= api_timeout): connected -> report 15s -> sleep 6h
 #                                     not connected          -> sleep 10min (retry)
 #   (sleep is blocked while "Stay awake" is on, or while a walk-by indicator is active)
@@ -31,6 +31,10 @@ substitutions:
 
 esp8266:
   board: esp01          # AT25SF041 = 512 KB flash (detected). No OTA room at 512K - flash via serial.
+  restore_from_flash: true   # persist globals (kill_count, needs_cleaning, wake_count) across deep sleep + power loss
+
+preferences:
+  flash_write_interval: 15s  # commit changed globals within 15s so an arm toggle sticks before sleep
 
 esphome:
   name: ${node_name}
@@ -50,6 +54,7 @@ esphome:
             - lambda: 'id(wake_count) += 1;'
             - logger.log: "intermediate heartbeat wake - back to sleep"
             - deep_sleep.allow: trap_sleep
+            - lambda: 'global_preferences->sync();'   # flush globals (wake_count...) before sleep
             - deep_sleep.enter:
                 id: trap_sleep
                 sleep_duration: ${chunk_sleep}
@@ -105,26 +110,21 @@ esphome:
                   - output.turn_on: led_catch              # solid red during the cycle
                   - lambda: 'id(kill_count) += 1; id(needs_cleaning) = true;'
                   - component.update: kill_total
-                  - if:
-                      condition:
-                        lambda: 'return id(armed);'
-                      then:
-                        - logger.log: "firing HV 10s (static duty)"
-                        - output.set_level:
-                            id: hv_pwm
-                            level: ${hv_duty}
-                        - output.set_level:
-                            id: hv_pwm2
-                            level: ${hv_duty}
-                        - delay: 10s
-                        - output.set_level:
-                            id: hv_pwm
-                            level: 0.0
-                        - output.set_level:
-                            id: hv_pwm2
-                            level: 0.0
-                      else:
-                        - logger.log: "DISARMED - HV not fired"
+                  # HV is ALWAYS LIVE - fires on every confirmed catch (no arm switch)
+                  - logger.log: "firing HV 10s (always live)"
+                  - output.set_level:
+                      id: hv_pwm
+                      level: ${hv_duty}
+                  - output.set_level:
+                      id: hv_pwm2
+                      level: ${hv_duty}
+                  - delay: 10s
+                  - output.set_level:
+                      id: hv_pwm
+                      level: 0.0
+                  - output.set_level:
+                      id: hv_pwm2
+                      level: 0.0
                   - output.turn_off: led_catch
                   - if:
                       condition:
@@ -158,6 +158,7 @@ esphome:
                   lambda: 'return !id(stay_awake) && !(id(walkby) && id(needs_cleaning));'
                 then:
                   - deep_sleep.allow: trap_sleep
+                  - lambda: 'global_preferences->sync();'   # flush globals before sleep
                   - deep_sleep.enter:
                       id: trap_sleep
                       sleep_duration: ${retry_sleep}
@@ -167,10 +168,6 @@ globals:
     type: int
     restore_value: true
     initial_value: '0'
-  - id: armed
-    type: bool
-    restore_value: true
-    initial_value: 'false'
   - id: needs_cleaning
     type: bool
     restore_value: true          # survives sleep; cleared on fresh boot w/ no short
@@ -231,6 +228,7 @@ api:
         then:
           - logger.log: "HA reported - sleeping one chunk"
           - deep_sleep.allow: trap_sleep
+          - lambda: 'global_preferences->sync();'   # flush globals (kill_count...) before sleep
           - deep_sleep.enter:
               id: trap_sleep
               sleep_duration: ${chunk_sleep}
@@ -356,13 +354,6 @@ interval:
 
 # ------------- Control -------------
 switch:
-  - platform: template
-    name: "Arm trap (HV live)"
-    lambda: 'return id(armed);'
-    turn_on_action:
-      - lambda: 'id(armed) = true;'
-    turn_off_action:
-      - lambda: 'id(armed) = false;'
   - platform: template
     name: "Stay awake"               # blocks sleep for bench work
     lambda: 'return id(stay_awake);'
