@@ -12,6 +12,12 @@ reporting all run on the trap's own ESP8266 and talk only to your LAN.
 > stock firmware is **not** redistributed here — this is independent firmware that
 > reimplements the behavior from the hardware up.
 
+> ⚠️ **Status: work in progress.** Wake, catch detection, the HV fire, battery
+> reporting, deep-sleep heartbeat and the kill cycle have all been verified on the
+> bench (including a damp-sponge load that mimics a mouse). A **confirmed kill on a
+> real mouse in the field is still pending** — the trap is deployed and we're waiting
+> on one. Treat this as functional-but-unproven and tune to your own hardware.
+
 ---
 
 ## What it does
