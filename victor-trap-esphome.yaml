@@ -26,8 +26,12 @@ substitutions:
   report_cycles: "12"         # bring up WiFi + report every N chunks (12 x 2h = ~24h)
   retry_sleep: "10min"        # sleep if the API never connected on a report wake
   api_timeout: "60s"          # max wait for HA before giving up and retrying
-  hv_settle: "300ms"          # let the supply rail stabilize after wake before the big HV draw
+  hv_settle: "100ms"          # brief settle after the boot inrush (was 300ms - the brownout that
+                              #   forced 300 was a dead-short bench artifact; a real mouse is a
+                              #   resistive load. Shorter settle = less time for the mouse to bolt.)
   hv_duty: "0.284"            # STATIC HV duty @ 230.6 Hz (no battery compensation)
+  catch_window_ms: "5000"     # after a wake, watch the plates this long (DARK) and fire the instant
+                              #   a mouse bridges them - covers a mouse rummaging / flaky contact
 
 esp8266:
   board: esp01          # AT25SF041 = 512 KB flash (detected). No OTA room at 512K - flash via serial.
@@ -43,14 +47,22 @@ esphome:
   on_boot:
     priority: -100
     then:
-      # --- read the plates FIRST (sample ~225ms in case the sense lags after a wake).
-      #     A bridged plate IS a catch, no matter what the reset reason claims -- waking
-      #     from deep sleep often mis-reports an external (catch) reset as Deep-Sleep Wake. ---
+      # --- CATCH LISTEN WINDOW: after a wake, watch the plates for up to ${catch_window_ms} ms,
+      #     DARK and radio-off, and break the INSTANT we see a solid (debounced) bridge so the
+      #     catch path fires right then. A mouse rummaging in the trap often isn't shorting the
+      #     plates at the one millisecond a single snapshot would check - this waits it out.
+      #     A bridged plate IS a catch regardless of reset reason (deep-sleep wakes often
+      #     mis-label an external/catch reset as "Deep-Sleep Wake").
+      #     delay() yields + feeds the watchdog, so the long loop is safe (same as our 10s HV). ---
       - lambda: |-
           bool b = false;
-          for (int i = 0; i < 15; i++) {
-            if (digitalRead(12) == 0) { b = true; break; }   // breaks early when bridged = fast fire
-            delay(15);
+          const int steps = ${catch_window_ms} / 20;
+          for (int i = 0; i < steps; i++) {
+            if (digitalRead(12) == 0) {               // possible bridge
+              delay(5);
+              if (digitalRead(12) == 0) { b = true; break; }   // confirmed = stop & fire now
+            }
+            delay(20);
           }
           id(plates_now) = b;
 
@@ -60,7 +72,7 @@ esphome:
       # skips this and falls through to fire, even if the reset reason mislabels it.
       - if:
           condition:
-            lambda: 'return ESP.getResetReason() == "Deep-Sleep Wake" && !id(plates_now) && (id(wake_count) + 1) < ${report_cycles};'
+            lambda: 'return ESP.getResetReason() == "Deep-Sleep Wake" && (!id(plates_now) || id(needs_cleaning)) && (id(wake_count) + 1) < ${report_cycles};'
           then:
             - lambda: 'id(wake_count) += 1;'
             - logger.log: "intermediate heartbeat wake - back to sleep"
@@ -86,7 +98,9 @@ esphome:
       # --- classify from the plate read above: bridged = Catch regardless of reset reason ---
       - lambda: |-
           String r = ESP.getResetReason();
-          if (id(plates_now))               id(wake_reason) = "Catch";   // bridged = catch, whatever woke it
+          // bridged plate = NEW catch only if there isn't already an uncleaned kill on the
+          // plates. needs_cleaning stays set until serviced, so the corpse won't be re-zapped.
+          if (id(plates_now) && !id(needs_cleaning)) id(wake_reason) = "Catch";
           else if (r == "Deep-Sleep Wake")  id(wake_reason) = "Scheduled";
           else if (r == "Power On")         id(wake_reason) = "Power on";
           else if (r == "External System")  id(wake_reason) = "Button";
@@ -97,9 +111,10 @@ esphome:
           condition:
             lambda: 'return id(wake_reason) == std::string("Catch");'
           then:
-            - delay: ${hv_settle}                 # rail settle so boot finishes before the HV draw
-            - logger.log: "CATCH - firing HV 10s (always live)"
-            - output.turn_on: led_catch
+            - delay: ${hv_settle}                 # brief rail settle after the boot inrush
+            - logger.log: "CATCH - firing HV 10s (always live), dark"
+            # Fire in the DARK - NO LED before or during the fire. A mouse bolts at the first
+            # light/motion and breaks contact; the red LED only flashes AFTER, to confirm a body.
             # mark HV live in flash; if the board resets mid-fire this flag survives = brownout proof
             - lambda: 'id(hv_live) = true; global_preferences->sync();'
             # Fire FULL duty immediately - hardest, fastest hit so the mouse can't react.
@@ -119,7 +134,6 @@ esphome:
                 id: hv_pwm2
                 level: 0.0
             - lambda: 'id(hv_live) = false; global_preferences->sync();'   # fire completed cleanly
-            - output.turn_off: led_catch
             # confirm AFTER the shock (like the stock): a body still across the plates = real kill.
             # Only now do we count it and flag cleaning - a glancing contact that left isn't counted.
             - delay: 200ms                        # let the sense settle after HV
@@ -146,13 +160,18 @@ esphome:
           id: led_status
           effect: "Breathe"
 
-      # --- fresh power-on with no short clears the "needs cleaning" flag ---
+      # --- SERVICE / RE-ARM: a human wake (power-on OR the trap's Wi-Fi button) with the
+      #     plates CLEAR means the trap was emptied -> clear the needs-cleaning lockout.
+      #     (A timer wake with clear plates does NOT clear it, so re-arm stays manual;
+      #      plates still bridged = body present -> never clears.) ---
       - if:
           condition:
-            lambda: 'return ESP.getResetReason() == "Power On" && digitalRead(12) != 0;'
+            lambda: |-
+              String r = ESP.getResetReason();
+              return (r == "Power On" || r == "External System") && !id(plates_now);
           then:
-            - lambda: 'id(needs_cleaning) = false;'
-            - logger.log: "fresh boot, plates clear - needs_cleaning cleared"
+            - lambda: 'id(needs_cleaning) = false; global_preferences->sync();'
+            - logger.log: "serviced (power-on/button, plates clear) - needs_cleaning cleared & re-armed"
 
       # --- battery: ONE sample per wake (GPIO0 low -> settle -> read -> GPIO0 high) ---
       - output.turn_off: gpio0                    # divider ON
@@ -412,11 +431,8 @@ button:
       - output.set_level:
           id: hv_pwm2
           level: 0.0
-  - platform: template
-    name: "Mark cleaned"
-    on_press:
-      - lambda: 'id(needs_cleaning) = false;'
-      - output.turn_off: led_catch
+  # (no "Mark cleaned" HA button - re-arm physically: empty the trap, then press the
+  #  trap's Wi-Fi button or power-cycle it with the plates clear. See the SERVICE block.)
 
 # ------------- Sleep -------------
 deep_sleep:

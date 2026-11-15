@@ -30,7 +30,9 @@ reporting all run on the trap's own ESP8266 and talk only to your LAN.
   ESP8266 can't single-sleep beyond ~3.5 h, so it chains short ~2 h chunks (counted
   in RTC memory) and only brings up WiFi on the 12th (~24 h). Catches and the button
   wake it instantly in between via the hardware reset line.
-- 🧹 **"Needs cleaning" flag** — set on a catch, visible in HA, clears on a fresh boot.
+- 🧹 **"Needs cleaning" flag + re-fire lockout** — a confirmed kill latches this flag,
+  which **disarms the trap** so it won't re-zap the corpse (or inflate the count) on
+  later wakes. It stays latched until you service the trap (see **Servicing** below).
 - 💡 **At-a-glance LEDs** — green *breathes* while connecting, then goes *solid* once
   linked to HA; blue lights in AP/setup mode (not connected); red marks a catch that
   needs cleaning.
@@ -101,6 +103,25 @@ Use a **3.3 V** USB-serial adapter (never 5 V):
 > the trap as hot the instant it's powered: bridging the plates (a finger, a tool, a
 > stray wire) will trigger the 10 s pulse. Keep it **unpowered** while assembling or
 > handling, and only power it once it's placed.
+
+## Servicing (after a catch)
+
+A confirmed kill (plates still bridged after the shock) sets **Needs cleaning** and
+**latches the trap off** — it will *not* fire again on anything, so the dead mouse
+isn't re-zapped every wake and the kill count stays honest. This is deliberate and
+mirrors the stock trap's "needs cleaned" behavior.
+
+Re-arming is a **physical action at the trap** (an HA button is no good here — the trap
+is asleep almost all the time and only reachable for a few seconds a day). After you've
+emptied the trap so the plates are clear, do either:
+
+- Press the trap's **Wi-Fi button**, or
+- **Power-cycle** it (pop a battery and back in).
+
+Either one, with the plates clear, clears the lockout and re-arms. If the plates are
+still bridged (body not removed) it won't clear — so you can't accidentally re-arm onto
+a corpse. Until you service it, the trap stays disarmed. (The flag lives in flash, so it
+survives deep sleep and battery changes.)
 
 ## Configuration knobs
 
