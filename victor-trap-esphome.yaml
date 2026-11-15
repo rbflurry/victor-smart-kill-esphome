@@ -43,13 +43,24 @@ esphome:
   on_boot:
     priority: -100
     then:
+      # --- read the plates FIRST (sample ~225ms in case the sense lags after a wake).
+      #     A bridged plate IS a catch, no matter what the reset reason claims -- waking
+      #     from deep sleep often mis-reports an external (catch) reset as Deep-Sleep Wake. ---
+      - lambda: |-
+          bool b = false;
+          for (int i = 0; i < 15; i++) {
+            if (digitalRead(12) == 0) { b = true; break; }   // breaks early when bridged = fast fire
+            delay(15);
+          }
+          id(plates_now) = b;
+
       # --- chained heartbeat gate ---
-      # Timer (Deep-Sleep Wake) that hasn't reached the report count yet = intermediate
-      # wake: bump the RTC counter and go straight back to sleep, no WiFi, no work.
-      # Catches (External System) and power-on always fall through to the full path.
+      # A timer wake with plates CLEAR and the count not reached = intermediate wake:
+      # bump the RTC counter and go straight back to sleep. A bridged plate (a catch)
+      # skips this and falls through to fire, even if the reset reason mislabels it.
       - if:
           condition:
-            lambda: 'return ESP.getResetReason() == "Deep-Sleep Wake" && (id(wake_count) + 1) < ${report_cycles};'
+            lambda: 'return ESP.getResetReason() == "Deep-Sleep Wake" && !id(plates_now) && (id(wake_count) + 1) < ${report_cycles};'
           then:
             - lambda: 'id(wake_count) += 1;'
             - logger.log: "intermediate heartbeat wake - back to sleep"
@@ -61,19 +72,24 @@ esphome:
 
       # --- full path: report wake (count reached), catch, or power-on ---
       - lambda: 'id(wake_count) = 0;'             # reset the heartbeat cycle
+      # brownout detector: if hv_live survived the reset, last boot died MID-HV-FIRE
+      - lambda: |-
+          id(hv_brownout) = id(hv_live);
+          id(hv_live) = false;
+          if (id(hv_brownout)) ESP_LOGW("hv", "BROWNOUT: board reset during the last HV fire");
+      - lambda: 'global_preferences->sync();'
       - deep_sleep.prevent: trap_sleep            # don't sleep until we decide
       - output.turn_on: gpio0                     # GPIO0 HIGH (clean boot, divider off)
       - output.set_level: { id: hv_pwm, level: 0.0 }
       - output.set_level: { id: hv_pwm2, level: 0.0 }
 
-      # --- classify the wake from ONE early GPIO12 read (drives both the label and
-      #     the catch decision). Done FIRST so a catch can fire with minimum latency. ---
+      # --- classify from the plate read above: bridged = Catch regardless of reset reason ---
       - lambda: |-
           String r = ESP.getResetReason();
-          bool plates_bridged = digitalRead(12) == 0;   // LOW = shorted
-          if (r == "Deep-Sleep Wake")       id(wake_reason) = "Scheduled";
+          if (id(plates_now))               id(wake_reason) = "Catch";   // bridged = catch, whatever woke it
+          else if (r == "Deep-Sleep Wake")  id(wake_reason) = "Scheduled";
           else if (r == "Power On")         id(wake_reason) = "Power on";
-          else if (r == "External System")  id(wake_reason) = plates_bridged ? "Catch" : "Button";
+          else if (r == "External System")  id(wake_reason) = "Button";
           else                              id(wake_reason) = std::string(r.c_str());
 
       # --- CATCH: fire HV AS FAST AS POSSIBLE (before battery sample / breathe / report) ---
@@ -84,13 +100,17 @@ esphome:
             - delay: ${hv_settle}                 # rail settle so boot finishes before the HV draw
             - logger.log: "CATCH - firing HV 10s (always live)"
             - output.turn_on: led_catch
+            # mark HV live in flash; if the board resets mid-fire this flag survives = brownout proof
+            - lambda: 'id(hv_live) = true; global_preferences->sync();'
+            # Fire FULL duty immediately - hardest, fastest hit so the mouse can't react.
+            # (rail is already stabilized by the hv_settle delay above; brownout detector
+            #  stays on - if a real kill ever trips it, reconsider a ramp or lower duty)
             - output.set_level:
                 id: hv_pwm
                 level: ${hv_duty}
             - output.set_level:
                 id: hv_pwm2
                 level: ${hv_duty}
-            - lambda: 'id(kill_count) += 1; id(needs_cleaning) = true;'
             - delay: 10s
             - output.set_level:
                 id: hv_pwm
@@ -98,13 +118,18 @@ esphome:
             - output.set_level:
                 id: hv_pwm2
                 level: 0.0
+            - lambda: 'id(hv_live) = false; global_preferences->sync();'   # fire completed cleanly
             - output.turn_off: led_catch
-            - component.update: kill_total
+            # confirm AFTER the shock (like the stock): a body still across the plates = real kill.
+            # Only now do we count it and flag cleaning - a glancing contact that left isn't counted.
+            - delay: 200ms                        # let the sense settle after HV
             - if:
                 condition:
-                  lambda: 'return digitalRead(12) == 0;'   # still shorted = target present
+                  lambda: 'return digitalRead(12) == 0;'   # still shorted = body present
                 then:
-                  - logger.log: "plates STILL shorted - target present"
+                  - logger.log: "confirmed kill - body on plates"
+                  - lambda: 'id(kill_count) += 1; id(needs_cleaning) = true; global_preferences->sync();'
+                  - component.update: kill_total
                   - repeat:
                       count: 5
                       then:
@@ -113,7 +138,7 @@ esphome:
                         - output.turn_off: led_catch
                         - delay: 150ms
                 else:
-                  - logger.log: "plates clear after cycle"
+                  - logger.log: "plates clear after shock - fired but not counted"
 
       # --- now the non-urgent stuff ---
       - component.update: wake_reason_s
@@ -180,6 +205,18 @@ globals:
     type: std::string
     restore_value: false         # friendly label for why this wake happened
     initial_value: '""'
+  - id: hv_live
+    type: bool
+    restore_value: true          # flashed true during an HV fire; survives a reset = brownout proof
+    initial_value: 'false'
+  - id: hv_brownout
+    type: bool
+    restore_value: false         # this-boot flag: last reset happened mid-HV-fire
+    initial_value: 'false'
+  - id: plates_now
+    type: bool
+    restore_value: false         # this-boot: plates bridged at wake (= catch, any reset reason)
+    initial_value: 'false'
 
 logger:
   baud_rate: 0                   # UART off - GPIO1/3 are used by the trap hardware
@@ -226,6 +263,11 @@ binary_sensor:
     name: "Needs cleaning"
     device_class: problem
     lambda: 'return id(needs_cleaning);'
+  - platform: template
+    name: "HV brownout last cycle"  # ON = board reset mid-HV-fire (supply couldn't hold the pulse)
+    device_class: problem
+    entity_category: diagnostic
+    lambda: 'return id(hv_brownout);'
   - platform: status
     name: "Status"                 # connectivity: online while connected to HA
 
@@ -370,15 +412,6 @@ button:
       - output.set_level:
           id: hv_pwm2
           level: 0.0
-  - platform: template
-    name: "Sample battery now"
-    on_press:
-      - output.turn_off: gpio0
-      - delay: 250ms
-      - component.update: batt_v
-      - delay: 50ms
-      - output.turn_on: gpio0
-      - component.update: batt_pct
   - platform: template
     name: "Mark cleaned"
     on_press:
