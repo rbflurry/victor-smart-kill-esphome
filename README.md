@@ -12,11 +12,17 @@ reporting all run on the trap's own ESP8266 and talk only to your LAN.
 > stock firmware is **not** redistributed here — this is independent firmware that
 > reimplements the behavior from the hardware up.
 
-> ⚠️ **Status: work in progress.** Wake, catch detection, the HV fire, battery
-> reporting, deep-sleep heartbeat and the kill cycle have all been verified on the
-> bench (including a damp-sponge load that mimics a mouse). A **confirmed kill on a
-> real mouse in the field is still pending** — the trap is deployed and we're waiting
-> on one. Treat this as functional-but-unproven and tune to your own hardware.
+> ✅ **Status: it works — first confirmed field kill.** The full chain — hardware wake
+> on a catch, the HV kill cycle, post-shock kill confirmation, battery reporting and the
+> deep-sleep heartbeat — has caught and killed a mouse in the field, not just on the bench.
+>
+> Still **pre-1.0 by choice.** The newest change — a short post-wake *bridge watch* that
+> re-checks the plates (so a mouse that isn't shorting them at the exact wake instant still
+> gets caught) — landed *after* that kill and hasn't been field-proven yet; the confirmed
+> kill was on the previous build. A **1.0** tag will follow once the bridge-watch catches
+> one in the field. Until then, treat it as working-but-tuning and calibrate to your own hardware.
+
+📓 **Changelog:** notable changes are tracked in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -56,6 +62,40 @@ Other revisions may differ — check your pin map before flashing.
 | 5  | Blue LED — Wi-Fi icon, lit in AP/setup mode |
 | A0 | Battery voltage (via GPIO0-gated divider) |
 | 1 / 3 | Used by the board — **keep UART logging off** |
+
+## Back up the stock firmware first
+
+**Do this before you flash anything.** Reading the trap's entire flash to a file gives
+you a one-command path back to a bone-stock trap if you change your mind or something
+goes sideways — which is the whole point of feeling safe trying this.
+
+Wire the **J1 header** exactly as in the [Flashing](#flashing) table below (3.3 V serial,
+GPIO0 to GND at power-up for download mode), then dump the full chip:
+
+```bash
+# sanity check: the adapter should see the chip and print its flash size + MAC
+esptool.py --port COM3 flash_id
+
+# dump the whole 512 KB flash (0x80000) to a file — adjust the port to yours
+esptool.py --port COM3 --baud 115200 read_flash 0x0 0x80000 victor-stock-backup.bin
+```
+
+Use `/dev/ttyUSB0` (Linux) or `/dev/tty.usbserial-*` (macOS) in place of `COM3`.
+Dumping the whole `0x0`–`0x80000` range (not just the app) captures the bootloader and
+the device's calibration/credentials, so the restore is truly complete.
+
+**Restoring stock** is the reverse — write that same file back to `0x0`:
+
+```bash
+esptool.py --port COM3 --baud 115200 write_flash 0x0 victor-stock-backup.bin
+```
+
+A few notes:
+- **Keep your backup private.** It's the stock image for *your* device and can contain its
+  Wi-Fi/cloud credentials — it's for restoring your own trap, not for sharing or re-posting.
+- **Check the dump before you trust it.** A 512 KB file that's all `0xFF` or all `0x00` means
+  the read failed (bad wiring or not in download mode) — redo it before overwriting anything.
+- Same wiring and download-mode steps apply to both the read and the write.
 
 ## Flashing
 
@@ -135,7 +175,8 @@ In `substitutions:` at the top of `victor-trap-esphome.yaml`:
 | `report_cycles` | `12` | WiFi report every N chunks (12 × 2h ≈ 24 h) |
 | `retry_sleep` | `10min` | Sleep if HA didn't connect on a report wake |
 | `api_timeout` | `60s` | How long to wait for HA before retrying |
-| `config_awake` | `1min` | Stay awake this long after a button press / power-on, to arm or configure from HA |
+| `hv_settle` | `100ms` | Rail-settle delay after boot before the HV fire |
+| `catch_window_ms` | `5000` | How long (ms) to watch the plates after a wake and fire the instant they bridge |
 
 Battery scaling lives on the `Battery voltage` sensor (`multiply: 6.44`) and the
 `Battery %` thresholds (`VFULL` / `VEMPTY`) — recalibrate for your pack.
@@ -147,7 +188,7 @@ Battery scaling lives on the `Battery voltage` sensor (`multiply: 6.44`) and the
 - **Status LED** (green light — breathes while connecting, solid once linked to HA)
 - **Wake reason** (diagnostic text — Scheduled / Catch / Button / Power on)
 - **Stay awake**, **Walk-by red indicator** (switches)
-- **HV test 3s**, **Sample battery now**, **Mark cleaned** (buttons)
+- **HV test 3s** (button — caution: energizes the plates)
 
 ## ⚠️ Safety
 
