@@ -17,7 +17,8 @@
 #   Needs HA 2024.8 or newer (sections view + perform-action).
 #
 # Controls (switches/buttons) only reach a trap while it's AWAKE - it sleeps
-# ~15 s after reporting. Press the trap's button for a 1-minute config window.
+# ~15 s after reporting. Press the trap's Wi-Fi button to wake it for a brief
+# window (it stays up only until it has reported, then sleeps again).
 # =============================================================================
 title: Trap
 views:
@@ -59,8 +60,8 @@ views:
           # One row per trap, auto-discovered
           - type: markdown
             content: |-
-              | Trap | Status | Battery | Kills | Armed | Last check-in |
-              |:--|:--|--:|--:|:--:|:--|
+              | Trap | Status | Battery | Kills | Last check-in |
+              |:--|:--|--:|--:|:--|
               {%- for s in integration_entities('esphome') | select('match', 'binary_sensor\\..*_status$') %}
               {%- set ents = device_entities(device_id(s)) %}
               {%- set kills = ents | select('match', 'sensor\\..*_kill_total$') | first | default('') %}
@@ -69,13 +70,12 @@ views:
               {%- set clean = ents | select('match', 'binary_sensor\\..*_needs_cleaning$') | first | default('') %}
               {%- set pct = ents | select('match', 'sensor\\..*_battery$') | first | default('') %}
               {%- set volt = ents | select('match', 'sensor\\..*_battery_voltage$') | first | default('') %}
-              {%- set armed = ents | select('match', 'switch\\..*_arm_trap_hv_live$') | first | default('') %}
               {%- set v = states(volt) | float(0) %}
-              | **{{ name }}** | {{ '🐭 Needs emptying' if is_state(clean, 'on') else '✅ Clear' }} | {{ '🚨' if v < 4.8 else ('🪫' if v < 5.0 else '🔋') }} {{ states(pct) }}% ({{ states(volt) }} V) | {{ states(kills) }} | {{ '⚡' if is_state(armed, 'on') else '⛔' }} | {{ '🟢 now' if is_state(s, 'on') else ('⚠️ ' if now() - states[s].last_changed > timedelta(hours=26) else '') ~ relative_time(states[s].last_changed) ~ ' ago' }} |
+              | **{{ name }}** | {{ '🐭 Needs emptying' if is_state(clean, 'on') else '✅ Clear' }} | {{ '🚨' if v < 4.8 else ('🪫' if v < 5.0 else '🔋') }} {{ states(pct) }}% ({{ states(volt) }} V) | {{ states(kills) }} | {{ '🟢 now' if is_state(s, 'on') else ('⚠️ ' if now() - states[s].last_changed > timedelta(hours=26) else '') ~ relative_time(states[s].last_changed) ~ ' ago' }} |
               {%- endif %}
               {%- endfor %}
 
-              ⚡ armed · ⛔ disarmed · open a trap's tab above for controls and history.
+              The trap is always live - a catch latches it to "Needs emptying" until you service it. Open a trap's tab above for controls and history.
 
   # ============================================================ PER-TRAP DETAIL
   # Copy this whole view for each trap (find/replace kitchen_trap).
@@ -98,8 +98,8 @@ views:
             content: >-
               <ha-alert alert-type="error" title="Mouse caught">
               Caught {{ relative_time(states.binary_sensor.kitchen_trap_needs_cleaning.last_changed) }} ago.
-              Empty the trap, then press <b>Mark cleaned</b> while it's awake
-              (or re-insert the batteries).
+              The trap has latched off. Empty it, then press its <b>Wi-Fi button</b>
+              (or re-insert the batteries) with the plates clear to re-arm.
               </ha-alert>
             visibility:
               - condition: state
@@ -135,13 +135,6 @@ views:
             entity: sensor.kitchen_trap_kill_total
             name: Total kills
             icon: mdi:counter
-          - type: tile
-            entity: switch.kitchen_trap_arm_trap_hv_live
-            name: Armed
-            icon: mdi:flash
-            color: amber
-            tap_action:
-              action: more-info
           - type: tile
             entity: sensor.kitchen_trap_wake_reason
             name: Last wake
@@ -200,18 +193,15 @@ views:
               {% if is_state('binary_sensor.kitchen_trap_status', 'on') %}
               <ha-alert alert-type="success">Trap is awake - controls will work now.</ha-alert>
               {% else %}
-              <ha-alert alert-type="info">Trap is asleep. Press the button on the trap
-              (1-minute window) before using these.</ha-alert>
+              <ha-alert alert-type="info">Trap is asleep. Press the trap's Wi-Fi button to
+              wake it, then use these during the brief window before it sleeps again.</ha-alert>
               {% endif %}
-          - type: tile
-            entity: switch.kitchen_trap_arm_trap_hv_live
-            name: Arm trap (HV live)
-            icon: mdi:flash-alert
-            color: red
-            tap_action:
-              action: toggle
-              confirmation:
-                text: Change the trap's armed state? When armed, a catch fires high voltage.
+          - type: markdown
+            content: >-
+              <ha-alert alert-type="warning" title="Always live">This trap has no
+              arm/disarm - a confirmed catch always fires HV. After a catch it latches
+              off (Needs cleaning); re-arm physically at the trap (empty it, then press
+              the Wi-Fi button or power-cycle with the plates clear).</ha-alert>
           - type: tile
             entity: switch.kitchen_trap_walk_by_red_indicator
             name: Walk-by red blink
@@ -224,25 +214,6 @@ views:
             icon: mdi:sleep-off
             tap_action:
               action: toggle
-          - type: tile
-            entity: button.kitchen_trap_mark_cleaned
-            name: Mark cleaned
-            icon: mdi:broom
-            color: green
-            tap_action:
-              action: perform-action
-              perform_action: button.press
-              target:
-                entity_id: button.kitchen_trap_mark_cleaned
-          - type: tile
-            entity: button.kitchen_trap_sample_battery_now
-            name: Sample battery
-            icon: mdi:battery-sync
-            tap_action:
-              action: perform-action
-              perform_action: button.press
-              target:
-                entity_id: button.kitchen_trap_sample_battery_now
           - type: tile
             entity: button.kitchen_trap_hv_test_3s_caution
             name: HV test 3 s
@@ -281,4 +252,3 @@ views:
                 - sensor.kitchen_trap_wake_reason
                 - binary_sensor.kitchen_trap_needs_cleaning
                 - sensor.kitchen_trap_kill_total
-                - switch.kitchen_trap_arm_trap_hv_live

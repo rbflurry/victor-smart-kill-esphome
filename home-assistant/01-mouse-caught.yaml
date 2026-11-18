@@ -22,18 +22,16 @@ variables:
   ents: "{{ device_entities(device_id(trigger.entity_id)) }}"
   trap: "{{ device_attr(device_id(trigger.entity_id), 'name_by_user') or device_attr(device_id(trigger.entity_id), 'name') }}"
 action:
-  - delay: "00:00:03"          # let kill total / armed state arrive
+  - delay: "00:00:03"          # let the kill total arrive
   - variables:
-      armed_ent: "{{ ents | select('match', 'switch\\..*_arm_trap_hv_live$') | first | default('') }}"
       kills_ent: "{{ ents | select('match', 'sensor\\..*_kill_total$') | first | default('') }}"
-      armed: "{{ is_state(armed_ent, 'on') }}"
       total: "{{ states(kills_ent) | int(0) }}"
   - service: notify.mobile_app_YOUR_PHONE
     data:
       title: "🐭 {{ trap }} caught something"
       message: >-
-        {% if armed %}HV fired.{% else %}Trap was DISARMED - HV did not fire, check it soon.{% endif %}
-        Kill #{{ total }}. Empty it, then press "Mark cleaned" (or re-insert the batteries).
+        HV fired - kill #{{ total }}. Empty it, then press the trap's Wi-Fi button
+        (or re-insert the batteries) with the plates clear to re-arm.
       data:
         tag: "{{ dev }}-catch"
         group: local-kill

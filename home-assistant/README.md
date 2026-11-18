@@ -91,18 +91,18 @@ and adds a swap reminder below 5.0 V. It waits 5 s after connect so fresh values
 
 ### 01 – Mouse caught
 Triggers on *Needs cleaning* going **off → on**. It deliberately ignores `unknown → on`,
-so an HA restart doesn't re-alert. The message includes the kill number and whether the
-trap was **armed**. If it was disarmed, the HV didn't fire and the mouse may still be alive.
+so an HA restart doesn't re-alert. The message gives the kill number and tells you to empty
+and re-arm the trap. The trap is always live, so a confirmed catch means the HV fired.
 
-> There's no "Mark cleaned" action button on the notification. The trap goes back to sleep
-> ~15 s after reporting, so the button would only work if *Walk-by red indicator* or
-> *Stay awake* is keeping it awake.
+> There's no action button on the notification. Re-arming is physical anyway (empty the
+> trap, then press its Wi-Fi button or re-insert the batteries with the plates clear) — the
+> trap is asleep almost all the time, so an HA button couldn't reach it.
 
 ### 02 – Still needs cleaning
 On every check-in where *Needs cleaning* is still on, sends a reminder with how long ago the
 catch happened. It skips the check-in that *was* the catch (wake reason `Catch`) so you don't
-get two alerts at once. It clears when you press **Mark cleaned** or re-insert the batteries
-with the plates clear.
+get two alerts at once. It clears when you re-arm the trap physically — press its Wi-Fi
+button or re-insert the batteries with the plates clear.
 
 ### 03 – Low battery warning / 04 – Critical battery alarm
 Both check the battery on every check-in:
@@ -143,16 +143,16 @@ but pairs with 05.
 **All traps tab** (finds every trap automatically, nothing to edit):
 - Alert banners for traps that need emptying, have a low battery or missed a check-in,
   or a green "all OK".
-- A table with one row per trap: status, battery % and V, kills, armed, last check-in.
+- A table with one row per trap: status, battery % and V, kills, last check-in.
 
 **Per-trap tab** (one per trap):
 - **Trap status:** a red *Mouse caught* banner, a check-in banner (*online now* /
   *asleep, last check-in X ago, next in ~N h* / *missed check-in*), and tiles for kills,
-  armed, last wake reason, plates and connection.
+  last wake reason, plates and connection.
 - **Battery:** a gauge, the voltage, a 30-day voltage trend and a low/critical banner.
-- **Controls:** arm (asks for confirmation), walk-by blink, stay awake, mark cleaned,
-  sample battery, and HV test (asks for confirmation). A banner shows whether the trap is
-  awake, because controls only reach it during a wake.
+- **Controls:** walk-by blink, stay awake, and HV test (asks for confirmation), plus an
+  "always live" note explaining there's no arm/disarm and how to re-arm after a catch. A
+  banner shows whether the trap is awake, because controls only reach it during a wake.
 - **History:** 7 days of check-ins and catches, plus an activity log.
 
 **Install:**
